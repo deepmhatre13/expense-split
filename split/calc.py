@@ -85,6 +85,9 @@ def get_net_balances(group_data):
         payer = st["from"]
         receiver = st["to"]
         amount_paise = int(round(st["amount"] * 100))
+        # Ignore invalid settlement amounts (must be positive)
+        if amount_paise <= 0:
+            continue
         balances[payer] += amount_paise
         balances[receiver] -= amount_paise
 
@@ -117,6 +120,9 @@ def who_owes(group_data):
         payer = st["from"]
         receiver = st["to"]
         amount_paise = int(round(st["amount"] * 100))
+        # Ignore invalid settlement amounts (must be positive)
+        if amount_paise <= 0:
+            continue
         owes[payer][receiver] -= amount_paise
 
     debts = []
