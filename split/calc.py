@@ -57,6 +57,26 @@ def split_by_share(amount, shares):
     return result
 
 
+def _expense_shares_paise(expense, members):
+    """Returns each member's share of an expense in paise."""
+    amount = expense.get("amount", 0.0)
+    amount_paise = int(round(amount * 100))
+
+    if expense.get("split") == "share":
+        shares = split_by_share(amount, expense.get("shares", {}))
+        return {
+            member: int(round(shares.get(member, 0.0) * 100))
+            for member in members
+        }
+
+    base_share = amount_paise // len(members)
+    remainder = amount_paise % len(members)
+    return {
+        member: base_share + (1 if index < remainder else 0)
+        for index, member in enumerate(members)
+    }
+
+
 def get_net_balances(group_data):
     """Calculates each person's net balance in paise from expenses and settlements.
     Positive means they are owed money, negative means they owe money.
@@ -69,16 +89,11 @@ def get_net_balances(group_data):
     
     for exp in group_data.get("expenses", []):
         paid_by = exp.get("paid_by")
-        amount = exp.get("amount", 0.0)
-        amount_paise = int(round(amount * 100))
+        amount_paise = int(round(exp.get("amount", 0.0) * 100))
         
         balances[paid_by] += amount_paise
-        
-        base_share = amount_paise // len(members)
-        remainder = amount_paise % len(members)
-        
-        for i, m in enumerate(members):
-            share = base_share + (1 if i < remainder else 0)
+
+        for m, share in _expense_shares_paise(exp, members).items():
             balances[m] -= share
             
     for st in group_data.get("settlements", []):
@@ -101,16 +116,9 @@ def who_owes(group_data):
     
     for exp in group_data.get("expenses", []):
         paid_by = exp.get("paid_by")
-        amount = exp.get("amount", 0.0)
-        amount_paise = int(round(amount * 100))
-        
-        base_share = amount_paise // len(members)
-        remainder = amount_paise % len(members)
-        
-        for i, m in enumerate(members):
+        for m, share in _expense_shares_paise(exp, members).items():
             if m == paid_by:
                 continue
-            share = base_share + (1 if i < remainder else 0)
             owes[m][paid_by] += share
 
     for st in group_data.get("settlements", []):

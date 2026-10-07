@@ -2,13 +2,14 @@
 
 import copy
 import io
+import sys
 import unittest
-from split.calc import split_equally, split_by_share, who_owes, get_net_balances, settle_plan
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from split.cli import cmd_settle
+from split.calc import split_equally, split_by_share, who_owes, get_net_balances, settle_plan
+from split.cli import cmd_settle, main
 
 
 def total_in_paise(result):
@@ -105,7 +106,7 @@ class TestSplitCalculations(unittest.TestCase):
             "members": ["alice", "bob"],
             "expenses": [{"paid_by": "alice", "amount": 100.0, "split": "equal"}]
         }
-        
+
         # Test who_owes function
         debts = who_owes(group_data)
         for debt in debts:
@@ -115,6 +116,71 @@ class TestSplitCalculations(unittest.TestCase):
         payments = settle_plan(group_data)
         for payment in payments:
             self.assertNotEqual(payment["from"], payment["to"], "Bug found: Self-debt detected in settle_plan!")
+
+class TestAddExpenseCommand(unittest.TestCase):
+
+    def setUp(self):
+        self.group_data = {
+            "members": ["karan", "siddharth", "arjun"],
+            "expenses": [],
+            "settlements": []
+        }
+
+    def run_command(self, arguments):
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["split"] + arguments), \
+                patch("split.cli.load_group", return_value=self.group_data), \
+                patch("split.cli.save_group") as save_group, \
+                redirect_stdout(output):
+            main()
+        return save_group, output.getvalue()
+
+    def test_documented_weighted_share_command(self):
+        save_group, output = self.run_command([
+            "add-expense", "flatmates", "Groceries", "900", "karan",
+            "share", "karan=2", "arjun=1"
+        ])
+
+        save_group.assert_called_once_with("flatmates", self.group_data)
+        self.assertEqual(
+            self.group_data["expenses"][0]["shares"],
+            {"karan": 2.0, "arjun": 1.0}
+        )
+        self.assertEqual(
+            who_owes(self.group_data),
+            [{"from": "arjun", "to": "karan", "amount": 300.0}]
+        )
+        self.assertEqual(
+            get_net_balances(self.group_data),
+            {"karan": 30000, "siddharth": 0, "arjun": -30000}
+        )
+        self.assertIn("Added expense 'Groceries' of ₹900.00", output)
+
+    def test_malformed_weight_is_rejected(self):
+        save_group, output = self.run_command([
+            "add-expense", "flatmates", "Groceries", "900", "karan",
+            "share", "karan=two", "arjun=1"
+        ])
+
+        save_group.assert_not_called()
+        self.assertEqual(self.group_data["expenses"], [])
+        self.assertIn("Invalid weight 'two' for karan", output)
+
+    def test_equal_expense_still_uses_all_members(self):
+        save_group, _ = self.run_command([
+            "add-expense", "flatmates", "Dinner", "900", "karan"
+        ])
+
+        save_group.assert_called_once_with("flatmates", self.group_data)
+        self.assertNotIn("shares", self.group_data["expenses"][0])
+        self.assertEqual(
+            who_owes(self.group_data),
+            [
+                {"from": "siddharth", "to": "karan", "amount": 300.0},
+                {"from": "arjun", "to": "karan", "amount": 300.0}
+            ]
+        )
+
 
 class TestSettleCommand(unittest.TestCase):
 
