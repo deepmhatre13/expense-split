@@ -81,6 +81,37 @@ class TestSplitCalculations(unittest.TestCase):
         with self.assertRaises(ValueError):
             split_by_share(100, {"alice": -1, "bob": -1})
 
+    def test_split_by_share_rejects_zero_individual_weight(self):
+        """A zero weight for one participant should raise ValueError."""
+        with self.assertRaises(ValueError):
+            split_by_share(100, {"alice": 2, "bob": 0})
+        with self.assertRaises(ValueError):
+            split_by_share(100, {"alice": 0, "bob": 1, "charlie": 1})
+
+    def test_split_by_share_rejects_negative_individual_weight(self):
+        """A negative weight for one participant should raise ValueError,
+        even when the total weight is positive."""
+        with self.assertRaises(ValueError):
+            split_by_share(100, {"alice": 3, "bob": -1})
+        with self.assertRaises(ValueError):
+            split_by_share(100, {"alice": 10, "bob": -2})
+        with self.assertRaises(ValueError):
+            split_by_share(100, {"alice": -1, "bob": 2})
+
+    def test_split_by_share_rejects_non_positive_mixed_weights(self):
+        """Mixed positive/zero/negative weights are all rejected."""
+        for shares in ({"alice": 1, "bob": 0, "charlie": 2},
+                       {"alice": 5, "bob": -1, "charlie": 1}):
+            with self.assertRaises(ValueError):
+                split_by_share(100, shares)
+
+    def test_split_by_share_positive_weights_still_work(self):
+        """Positive weights, including fractional ones, still split exactly."""
+        res = split_by_share(90, {"alice": 0.5, "bob": 0.25, "charlie": 0.25})
+        self.assertEqual(set(res), {"alice", "bob", "charlie"})
+        self.assertTrue(all(v > 0 for v in res.values()))
+        self.assertEqual(total_in_paise(res), 9000)
+
     def test_who_owes_empty_group(self):
         """An empty group should return no debts."""
         self.assertEqual(who_owes({}), [])

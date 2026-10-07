@@ -24,6 +24,15 @@ def split_by_share(amount, shares):
     the participants with the largest fractional remainders (ties broken by
     their order in ``shares``), which keeps the result deterministic.
     """
+    # Every individual weight must be a positive share.  Checking only the
+    # total would let a zero or negative weight through whenever the other
+    # weights make the sum positive, producing zero or negative allocations.
+    for person, weight in shares.items():
+        if weight <= 0:
+            raise ValueError(
+                f"Weight for {person} must be greater than 0, got {weight}"
+            )
+
     total_shares = sum(shares.values())
     if total_shares <= 0:
         raise ValueError("Total shares must be greater than 0")
