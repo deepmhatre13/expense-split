@@ -39,6 +39,9 @@ def cmd_add_expense(args):
         return
 
     amount = float(args.amount)
+    if not math.isfinite(amount) or amount <= 0:
+        print(f"Error: Amount must be a finite number greater than 0, got '{args.amount}'.")
+        return
 
     shares = None
     if args.split == "share":
