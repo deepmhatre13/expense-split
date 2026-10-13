@@ -182,7 +182,12 @@ def get_net_balances(group_data):
 
 
 def who_owes(group_data):
-    """Calculate netted pairwise debts between group members."""
+    """Calculates netted pairwise debts between members.
+
+    Pairwise netting can create circular obligations after somebody follows a
+    globally netted settlement plan.  Such cycles have no effect on anyone's
+    net balance, so remove them before reporting the remaining debts.
+    """
     members = group_data.get("members", [])
     if not members:
         return []
@@ -213,8 +218,8 @@ def who_owes(group_data):
 
         owes[payer][receiver] -= amount_paise
 
-    debts = []
-
+    # Convert each pair to a single directed edge before cancelling cycles.
+    edges = {member: {} for member in members}
     for i in range(len(members)):
         for j in range(i + 1, len(members)):
             member1 = members[i]
