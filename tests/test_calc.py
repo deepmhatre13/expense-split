@@ -568,6 +568,79 @@ class TestSettlePlan(unittest.TestCase):
                 f"Config {balances_list}: settle_plan gave {len(payments)} payments, reference min is {ref_min}"
             )
 
+    def test_repeated_and_symmetric_balances(self):
+        """Repeated balances and symmetric states are resolved efficiently and accurately."""
+        # 8 positive, 8 negative identical balances
+        bals = [15.0] * 8 + [-15.0] * 8
+        members = [f"user_{i:02d}" for i in range(len(bals))]
+        expenses = [
+            {"paid_by": members[i], "amount": 15.0, "split": "share", "shares": {members[8 + i]: 15.0}}
+            for i in range(8)
+        ]
+        group = {"members": members, "expenses": expenses}
+        payments = self._verify_plan(group, expected_max_payments=8)
+        self.assertEqual(len(payments), 8)
+
+    def test_fractional_rupee_paise_preservation(self):
+        """Monetary values represented in paise, including fractional rupee amounts, settle exactly."""
+        group = {
+            "members": ["alice", "bob", "charlie"],
+            "expenses": [
+                {"paid_by": "alice", "amount": 2.675, "split": "equal"},
+            ],
+            "settlements": []
+        }
+        payments = self._verify_plan(group)
+        self.assertEqual(len(payments), 2)
+        total_paid = sum(int(round(p["amount"] * 100)) for p in payments)
+        self.assertEqual(total_paid, 178)  # 268 total - 90 alice share = 178 paise
+
+    def test_deterministic_payment_ordering(self):
+        """Identical input data always produces deterministically ordered payments."""
+        group = {
+            "members": ["dave", "alice", "charlie", "bob"],
+            "expenses": [
+                {"paid_by": "alice", "amount": 100.0, "split": "equal"},
+                {"paid_by": "charlie", "amount": 60.0, "split": "equal"},
+            ]
+        }
+        first_plan = settle_plan(group)
+        for _ in range(5):
+            self.assertEqual(settle_plan(group), first_plan)
+
+        # Ordering check: sorted by 'from', then 'to'
+        for k in range(len(first_plan) - 1):
+            p1 = first_plan[k]
+            p2 = first_plan[k + 1]
+            self.assertLessEqual((p1["from"], p1["to"]), (p2["from"], p2["to"]))
+
+    def test_large_realistic_synthetic_group_exact(self):
+        """Groups with 20+ participants with non-zero balances complete fast and clear all debts."""
+        # 10 pairs (N=20)
+        members = [f"m_{i:02d}" for i in range(20)]
+        expenses = []
+        for i in range(10):
+            expenses.append({
+                "paid_by": members[i],
+                "amount": 50.0,
+                "split": "share",
+                "shares": {members[10 + i]: 50.0}
+            })
+        group = {"members": members, "expenses": expenses}
+        payments = self._verify_plan(group, expected_max_payments=10)
+        self.assertEqual(len(payments), 10)
+
+    def test_explicit_approximate_mode(self):
+        """Explicit approximation mode clears all balances with positive distinct payments."""
+        members = [f"m_{i}" for i in range(12)]
+        expenses = [
+            {"paid_by": members[0], "amount": 120.0, "split": "equal"}
+        ]
+        group = {"members": members, "expenses": expenses, "approximate": True}
+        payments = self._verify_plan(group)
+        self.assertTrue(len(payments) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
