@@ -1,9 +1,10 @@
 """Command Line Interface for Expense Split."""
 
 import argparse
+from decimal import Decimal
 import math
 import sys
-from split.calc import split_equally, who_owes, settle_plan
+from split.calc import split_equally, who_owes, settle_plan, to_paise, _SCALE
 from split.io import load_group, save_group, load_all_groups
 
 
@@ -133,7 +134,32 @@ def cmd_settle(args):
         print(f"No pending debt found between {args.payer} and {args.receiver}.")
         return
 
-    amount = owed_record["amount"]
+    max_owed_amount = owed_record["amount"]
+    max_owed_paise = to_paise(max_owed_amount)
+
+    raw_amount = getattr(args, "amount", None)
+    if raw_amount is not None:
+        try:
+            payment_paise = to_paise(raw_amount)
+        except (ValueError, TypeError):
+            print(f"Error: Amount must be a valid number, got '{raw_amount}'.")
+            return
+
+        if payment_paise <= 0:
+            print(f"Error: Amount must be greater than 0, got '{raw_amount}'.")
+            return
+
+        if payment_paise > max_owed_paise:
+            print(
+                f"Error: Payment amount ₹{float(Decimal(payment_paise) * _SCALE):.2f} "
+                f"exceeds outstanding obligation of ₹{max_owed_amount:.2f}."
+            )
+            return
+
+        amount = float(Decimal(payment_paise) * _SCALE)
+    else:
+        amount = max_owed_amount
+
     settlements = group.get("settlements", [])
     settlements.append({
         "from": payer,
@@ -184,6 +210,7 @@ def main():
     p_set.add_argument("group", help="Group identifier")
     p_set.add_argument("payer", help="Person paying the settlement")
     p_set.add_argument("receiver", help="Person receiving the settlement")
+    p_set.add_argument("amount", nargs="?", default=None, help="Payment amount (optional, defaults to full settlement)")
     p_set.set_defaults(func=cmd_settle)
 
     # settle-plan
