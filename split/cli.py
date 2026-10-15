@@ -32,74 +32,206 @@ def cmd_summary(args):
             print(f"  • {d['from'].capitalize()} owes {d['to'].capitalize()} ₹{d['amount']:.2f}")
 
 
-def cmd_add_expense(args):
-    group = load_group(args.group)
-    if not group:
-        print(f"Error: Group '{args.group}' not found.")
-        return
+def _get_max_expense_id(expenses):
+    """Return maximum integer id present in expenses, or 0 if none."""
+    max_id = 0
+    for exp in expenses:
+        if isinstance(exp, dict) and "id" in exp:
+            try:
+                exp_id = int(exp["id"])
+                if exp_id > max_id:
+                    max_id = exp_id
+            except (ValueError, TypeError):
+                pass
+    return max_id
 
-    paid_by = args.paid_by.lower()
+
+def _find_expense_index(expenses, target_id):
+    """Find index of expense by id (supports int, str, or 1-based index for legacy records).
+
+    First checks explicit 'id' fields. If no expense has matching explicit 'id',
+    checks if target_id is a 1-based index matching an un-identified legacy expense.
+    Returns None if not found.
+    """
+    # 1. Exact match by explicit 'id'
+    for idx, exp in enumerate(expenses):
+        if not isinstance(exp, dict):
+            continue
+        exp_id = exp.get("id")
+        if exp_id is not None and str(exp_id) == str(target_id):
+            return idx
+
+    # 2. Backward compatibility fallback: 1-based index for legacy expenses without an 'id'
+    try:
+        numeric_id = int(target_id)
+        if 1 <= numeric_id <= len(expenses):
+            candidate = expenses[numeric_id - 1]
+            if isinstance(candidate, dict) and "id" not in candidate:
+                return numeric_id - 1
+    except (ValueError, TypeError):
+        pass
+
+    return None
+
+
+def _validate_expense_fields(group, description, amount_raw, paid_by_raw, split_raw, share_weights_raw):
+    """Validate common expense fields according to project conventions.
+
+    Returns (valid, error_msg, validated_dict) tuple.
+    """
+    paid_by = paid_by_raw.lower()
     members = group.get("members", [])
     if paid_by not in members:
-        print(f"Error: '{paid_by}' is not a member of the group.")
-        return
+        return False, f"Error: '{paid_by}' is not a member of the group.", None
 
-    amount = float(args.amount)
+    try:
+        amount = float(amount_raw)
+    except (ValueError, TypeError):
+        return False, f"Error: Amount must be a finite number greater than 0, got '{amount_raw}'.", None
+
     if not math.isfinite(amount) or amount <= 0:
-        print(f"Error: Amount must be a finite number greater than 0, got '{args.amount}'.")
-        return
+        return False, f"Error: Amount must be a finite number greater than 0, got '{amount_raw}'.", None
+
+    split = split_raw.lower() if split_raw else "equal"
+    if split not in ("equal", "share"):
+        return False, f"Error: Invalid split type '{split_raw}'.", None
 
     shares = None
-    if args.split == "share":
-        if not args.share_weights:
-            print("Error: Share split requires at least one name=weight value.")
-            return
+    if split == "share":
+        if not share_weights_raw:
+            return False, "Error: Share split requires at least one name=weight value.", None
 
         shares = {}
-        members = group.get("members", [])
-        for value in args.share_weights:
+        for value in share_weights_raw:
             if value.count("=") != 1:
-                print(f"Error: Invalid share '{value}'. Use name=weight.")
-                return
+                return False, f"Error: Invalid share '{value}'. Use name=weight.", None
 
             name, raw_weight = value.split("=", 1)
             name = name.lower()
             try:
                 weight = float(raw_weight)
             except ValueError:
-                print(f"Error: Invalid weight '{raw_weight}' for {name}.")
-                return
+                return False, f"Error: Invalid weight '{raw_weight}' for {name}.", None
 
             if not name or name not in members:
-                print(f"Error: '{name}' is not a member of the group.")
-                return
+                return False, f"Error: '{name}' is not a member of the group.", None
             if name in shares:
-                print(f"Error: Duplicate share for '{name}'.")
-                return
+                return False, f"Error: Duplicate share for '{name}'.", None
             if not math.isfinite(weight) or weight <= 0:
-                print(f"Error: Weight for '{name}' must be more than 0.")
-                return
+                return False, f"Error: Weight for '{name}' must be more than 0.", None
 
             shares[name] = weight
-    elif args.share_weights:
-        print("Error: Share weights can only be used with the 'share' split.")
+    elif share_weights_raw:
+        return False, "Error: Share weights can only be used with the 'share' split.", None
+
+    return True, None, {
+        "description": description,
+        "amount": amount,
+        "paid_by": paid_by,
+        "split": split,
+        "shares": shares,
+    }
+
+
+def cmd_add_expense(args):
+    group = load_group(args.group)
+    if not group:
+        print(f"Error: Group '{args.group}' not found.")
+        return
+
+    valid, err_msg, validated = _validate_expense_fields(
+        group, args.description, args.amount, args.paid_by, args.split, args.share_weights
+    )
+    if not valid:
+        print(err_msg)
         return
 
     expenses = group.get("expenses", [])
-    next_id = len(expenses) + 1
+    next_id = max(len(expenses) + 1, _get_max_expense_id(expenses) + 1)
     new_expense = {
         "id": next_id,
-        "description": args.description,
-        "amount": amount,
-        "paid_by": args.paid_by.lower(),
-        "split": args.split.lower()
+        "description": validated["description"],
+        "amount": validated["amount"],
+        "paid_by": validated["paid_by"],
+        "split": validated["split"]
     }
-    if shares is not None:
-        new_expense["shares"] = shares
+    if validated["shares"] is not None:
+        new_expense["shares"] = validated["shares"]
+
     expenses.append(new_expense)
     group["expenses"] = expenses
     save_group(args.group, group)
-    print(f"Added expense '{args.description}' of ₹{amount:.2f} to {args.group}.")
+    print(f"Added expense '{validated['description']}' of ₹{validated['amount']:.2f} to {args.group}.")
+
+
+def cmd_edit_expense(args):
+    group = load_group(args.group)
+    if not group:
+        print(f"Error: Group '{args.group}' not found.")
+        return
+
+    expenses = group.get("expenses", [])
+    idx = _find_expense_index(expenses, args.expense_id)
+    if idx is None:
+        print(f"Error: Expense with ID '{args.expense_id}' not found in group '{args.group}'.")
+        return
+
+    valid, err_msg, validated = _validate_expense_fields(
+        group, args.description, args.amount, args.paid_by, args.split, args.share_weights
+    )
+    if not valid:
+        print(err_msg)
+        return
+
+    target_expense = expenses[idx]
+    original_id = target_expense.get("id", args.expense_id)
+    # Ensure ID type consistency if original was int
+    try:
+        original_id = int(original_id)
+    except (ValueError, TypeError):
+        pass
+
+    updated_expense = {
+        "id": original_id,
+        "description": validated["description"],
+        "amount": validated["amount"],
+        "paid_by": validated["paid_by"],
+        "split": validated["split"]
+    }
+    if validated["shares"] is not None:
+        updated_expense["shares"] = validated["shares"]
+
+    # In-memory replacement
+    new_expenses = list(expenses)
+    new_expenses[idx] = updated_expense
+    group["expenses"] = new_expenses
+    save_group(args.group, group)
+    print(f"Updated expense ID {original_id} in {args.group}.")
+
+
+def cmd_delete_expense(args):
+    group = load_group(args.group)
+    if not group:
+        print(f"Error: Group '{args.group}' not found.")
+        return
+
+    expenses = group.get("expenses", [])
+    idx = _find_expense_index(expenses, args.expense_id)
+    if idx is None:
+        print(f"Error: Expense with ID '{args.expense_id}' not found in group '{args.group}'.")
+        return
+
+    target_expense = expenses[idx]
+    target_id = target_expense.get("id", args.expense_id)
+    target_desc = target_expense.get("description", "")
+
+    new_expenses = [exp for i, exp in enumerate(expenses) if i != idx]
+    group["expenses"] = new_expenses
+    save_group(args.group, group)
+    if target_desc:
+        print(f"Deleted expense ID {target_id} ('{target_desc}') from {args.group}.")
+    else:
+        print(f"Deleted expense ID {target_id} from {args.group}.")
 
 
 def cmd_settle(args):
@@ -178,6 +310,23 @@ def main():
     p_add.add_argument("split", choices=["equal", "share"], default="equal", nargs="?", help="Split type")
     p_add.add_argument("share_weights", nargs="*", help="Share weights as name=weight")
     p_add.set_defaults(func=cmd_add_expense)
+
+    # edit-expense
+    p_edit = subparsers.add_parser("edit-expense", help="Edit an existing expense in a group")
+    p_edit.add_argument("group", help="Group identifier")
+    p_edit.add_argument("expense_id", help="ID of the expense to edit")
+    p_edit.add_argument("description", help="New expense description")
+    p_edit.add_argument("amount", type=float, help="New amount paid")
+    p_edit.add_argument("paid_by", help="Member who paid")
+    p_edit.add_argument("split", choices=["equal", "share"], default="equal", nargs="?", help="Split type")
+    p_edit.add_argument("share_weights", nargs="*", help="Share weights as name=weight")
+    p_edit.set_defaults(func=cmd_edit_expense)
+
+    # delete-expense
+    p_del = subparsers.add_parser("delete-expense", help="Delete an expense from a group")
+    p_del.add_argument("group", help="Group identifier")
+    p_del.add_argument("expense_id", help="ID of the expense to delete")
+    p_del.set_defaults(func=cmd_delete_expense)
 
     # settle
     p_set = subparsers.add_parser("settle", help="Settle debts between members")
