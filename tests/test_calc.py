@@ -380,6 +380,66 @@ class TestSettleCommand(unittest.TestCase):
             [{"from": "alice", "to": "david", "amount": 200.0}],
         )
 
+    def test_settle_partial_amount_reduces_debt(self):
+        group = copy.deepcopy(self.group_data)
+        args = SimpleNamespace(group="groupA", payer="ravi", receiver="priya", amount="50.0")
+
+        with patch("split.cli.load_group", return_value=group), \
+                patch("split.cli.save_group") as save_group, \
+                redirect_stdout(io.StringIO()):
+            cmd_settle(args)
+
+        save_group.assert_called_once_with("groupA", group)
+        self.assertEqual(
+            group["settlements"],
+            [{"from": "ravi", "to": "priya", "amount": 50.0}]
+        )
+        self.assertEqual(who_owes(group), [{"from": "ravi", "to": "priya", "amount": 150.0}])
+
+    def test_settle_partial_amount_exceeding_debt_is_rejected(self):
+        group = copy.deepcopy(self.group_data)
+        args = SimpleNamespace(group="groupA", payer="ravi", receiver="priya", amount="250.0")
+        output = io.StringIO()
+
+        with patch("split.cli.load_group", return_value=group), \
+                patch("split.cli.save_group") as save_group, \
+                redirect_stdout(output):
+            cmd_settle(args)
+
+        save_group.assert_not_called()
+        self.assertEqual(group["settlements"], [])
+        self.assertIn("exceeds outstanding obligation", output.getvalue())
+
+    def test_settle_zero_or_negative_amount_is_rejected(self):
+        for invalid_amt in ["0", "-50"]:
+            group = copy.deepcopy(self.group_data)
+            args = SimpleNamespace(group="groupA", payer="ravi", receiver="priya", amount=invalid_amt)
+            output = io.StringIO()
+
+            with patch("split.cli.load_group", return_value=group), \
+                    patch("split.cli.save_group") as save_group, \
+                    redirect_stdout(output):
+                cmd_settle(args)
+
+            save_group.assert_not_called()
+            self.assertEqual(group["settlements"], [])
+            self.assertIn("Error: Amount must be greater than 0", output.getvalue())
+
+    def test_settle_invalid_or_non_finite_amount_is_rejected(self):
+        for invalid_amt in ["abc", "nan", "inf", "-inf"]:
+            group = copy.deepcopy(self.group_data)
+            args = SimpleNamespace(group="groupA", payer="ravi", receiver="priya", amount=invalid_amt)
+            output = io.StringIO()
+
+            with patch("split.cli.load_group", return_value=group), \
+                    patch("split.cli.save_group") as save_group, \
+                    redirect_stdout(output):
+                cmd_settle(args)
+
+            save_group.assert_not_called()
+            self.assertEqual(group["settlements"], [])
+            self.assertIn("Error: Amount must be a valid number", output.getvalue())
+
 
 class TestSettlePlan(unittest.TestCase):
     """Tests for minimum-transaction settle_plan calculation."""
