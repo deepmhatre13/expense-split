@@ -27,7 +27,12 @@ def cmd_summary(args):
     print("Expenses:")
     total = 0.0
     for exp in group.get("expenses", []):
-        print(f"  • {exp['description']}: ₹{exp['amount']:.2f} (paid by {exp['paid_by']})")
+        paid_by = exp.get("paid_by")
+        if isinstance(paid_by, dict):
+            payer_str = ", ".join(f"{p}: ₹{a:.2f}" for p, a in paid_by.items())
+            print(f"  • {exp['description']}: ₹{exp['amount']:.2f} (paid by {payer_str})")
+        else:
+            print(f"  • {exp['description']}: ₹{exp['amount']:.2f} (paid by {paid_by})")
         total += exp["amount"]
     print(f"\nTotal Group Spend: ₹{total:.2f}")
 
@@ -119,20 +124,76 @@ def _active_settlement_plan(group):
 def _validate_expense_fields(group, description, amount_raw, paid_by_raw, split_raw, share_weights_raw):
     """Validate common expense fields according to project conventions.
 
+    Supports single payer (e.g. 'alice') or multiple payers specified as
+    comma-separated name=amount pairs (e.g. 'alice=20.00,bob=10.00').
+
     Returns (valid, error_msg, validated_dict) tuple.
     """
-    paid_by = paid_by_raw.lower()
     members = group.get("members", [])
-    if paid_by not in members:
-        return False, f"Error: '{paid_by}' is not a member of the group.", None
 
     try:
-        amount = float(amount_raw)
+        amount_paise = to_paise(amount_raw)
     except (ValueError, TypeError):
         return False, f"Error: Amount must be a finite number greater than 0, got '{amount_raw}'.", None
 
-    if not math.isfinite(amount) or amount <= 0:
+    if amount_paise <= 0:
         return False, f"Error: Amount must be a finite number greater than 0, got '{amount_raw}'.", None
+
+    amount = float(Decimal(amount_paise) * _SCALE)
+
+    if not paid_by_raw or not paid_by_raw.strip():
+        return False, "Error: Paid by cannot be empty.", None
+
+    paid_by_raw_clean = paid_by_raw.strip()
+
+    if "=" in paid_by_raw_clean or "," in paid_by_raw_clean:
+        # Multiple payers syntax: name=amount,name=amount or comma-separated
+        payer_entries = [entry.strip() for entry in paid_by_raw_clean.split(",") if entry.strip()]
+        if not payer_entries:
+            return False, "Error: Paid by cannot be empty.", None
+
+        paid_by_dict = {}
+        total_contributed_paise = 0
+
+        for entry in payer_entries:
+            if entry.count("=") != 1:
+                return False, f"Error: Invalid payer format '{entry}'. Use name=amount.", None
+
+            name, raw_amt = entry.split("=", 1)
+            name = name.strip().lower()
+            if not name:
+                return False, f"Error: Invalid payer format '{entry}'. Use name=amount.", None
+
+            if name not in members:
+                return False, f"Error: '{name}' is not a member of the group.", None
+
+            if name in paid_by_dict:
+                return False, f"Error: Duplicate contributor '{name}'.", None
+
+            try:
+                contrib_paise = to_paise(raw_amt)
+            except (ValueError, TypeError):
+                return False, f"Error: Contribution for '{name}' must be a finite number greater than 0, got '{raw_amt}'.", None
+
+            if contrib_paise <= 0:
+                return False, f"Error: Contribution for '{name}' must be greater than 0, got '{raw_amt}'.", None
+
+            paid_by_dict[name] = float(Decimal(contrib_paise) * _SCALE)
+            total_contributed_paise += contrib_paise
+
+        if total_contributed_paise != amount_paise:
+            total_contributed_float = float(Decimal(total_contributed_paise) * _SCALE)
+            return (
+                False,
+                f"Error: Total contributions (₹{total_contributed_float:.2f}) must equal the expense total (₹{amount:.2f}).",
+                None,
+            )
+
+        paid_by = paid_by_dict
+    else:
+        paid_by = paid_by_raw_clean.lower()
+        if paid_by not in members:
+            return False, f"Error: '{paid_by}' is not a member of the group.", None
 
     split = split_raw.lower() if split_raw else "equal"
     if split not in ("equal", "share"):
@@ -403,7 +464,7 @@ def main():
     p_add.add_argument("group", help="Group identifier")
     p_add.add_argument("description", help="Expense description")
     p_add.add_argument("amount", type=float, help="Amount paid")
-    p_add.add_argument("paid_by", help="Member who paid")
+    p_add.add_argument("paid_by", help="Member who paid, or multiple payers as name=amount,name=amount")
     p_add.add_argument("split", choices=["equal", "share"], default="equal", nargs="?", help="Split type")
     p_add.add_argument("share_weights", nargs="*", help="Share weights as name=weight")
     p_add.set_defaults(func=cmd_add_expense)
@@ -414,7 +475,7 @@ def main():
     p_edit.add_argument("expense_id", help="ID of the expense to edit")
     p_edit.add_argument("description", help="New expense description")
     p_edit.add_argument("amount", type=float, help="New amount paid")
-    p_edit.add_argument("paid_by", help="Member who paid")
+    p_edit.add_argument("paid_by", help="Member who paid, or multiple payers as name=amount,name=amount")
     p_edit.add_argument("split", choices=["equal", "share"], default="equal", nargs="?", help="Split type")
     p_edit.add_argument("share_weights", nargs="*", help="Share weights as name=weight")
     p_edit.set_defaults(func=cmd_edit_expense)

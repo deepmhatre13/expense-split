@@ -148,6 +148,24 @@ def _expense_shares_paise(expense, members):
     }
 
 
+def _expense_payers_paise(expense):
+    """Return each contributor's payment in integer paise.
+
+    Supports legacy single payer strings (e.g., "paid_by": "alice")
+    and multiple contributors (e.g., "paid_by": {"alice": 20.0, "bob": 10.0}).
+    """
+    paid_by = expense.get("paid_by")
+    if isinstance(paid_by, str):
+        amount_paise = to_paise(expense.get("amount", 0.0))
+        return {paid_by: amount_paise}
+    elif isinstance(paid_by, dict):
+        return {
+            person: to_paise(amt)
+            for person, amt in paid_by.items()
+        }
+    return {}
+
+
 def get_net_balances(group_data):
     """Calculate net balances in integer paise.
 
@@ -160,10 +178,9 @@ def get_net_balances(group_data):
     balances = {member: 0 for member in members}
 
     for expense in group_data.get("expenses", []):
-        paid_by = expense.get("paid_by")
-        amount_paise = to_paise(expense.get("amount", 0.0))
-
-        balances[paid_by] += amount_paise
+        for payer, paid_amount in _expense_payers_paise(expense).items():
+            if payer in balances:
+                balances[payer] += paid_amount
 
         for member, share in _expense_shares_paise(
             expense, members
@@ -202,15 +219,52 @@ def who_owes(group_data):
     }
 
     for expense in group_data.get("expenses", []):
-        paid_by = expense.get("paid_by")
+        payers = _expense_payers_paise(expense)
+        total_paid = sum(payers.values())
 
-        for member, share in _expense_shares_paise(
-            expense, members
-        ).items():
-            if member == paid_by:
-                continue
+        if total_paid <= 0:
+            continue
 
-            owes[member][paid_by] += share
+        shares = _expense_shares_paise(expense, members)
+
+        # For this expense:
+        # Net balance for each participant = paid - share
+        creditors = {}  # participant -> net credit (positive)
+        debtors = {}    # participant -> net debt (positive)
+
+        for member in members:
+            net_exp = payers.get(member, 0) - shares.get(member, 0)
+            if net_exp > 0:
+                creditors[member] = net_exp
+            elif net_exp < 0:
+                debtors[member] = -net_exp
+
+        total_net_credit = sum(creditors.values())
+        if total_net_credit <= 0:
+            continue
+
+        # Each debtor owes each creditor proportionally: debtor_net * (creditor_net / total_net_credit)
+        # Using exact paise allocation to preserve exact totals
+        for debtor, debt_amount in debtors.items():
+            allocations = {}
+            remainders = []
+            unallocated = debt_amount
+
+            for creditor, credit_amount in creditors.items():
+                exact = (Decimal(debt_amount) * Decimal(credit_amount)) / Decimal(total_net_credit)
+                base = int(exact.to_integral_value(rounding=ROUND_FLOOR))
+                allocations[creditor] = base
+                unallocated -= base
+                remainders.append((exact - base, creditor))
+
+            remainders.sort(key=lambda item: -item[0])
+            for i in range(unallocated):
+                creditor = remainders[i % len(remainders)][1]
+                allocations[creditor] += 1
+
+            for creditor, portion_paise in allocations.items():
+                if portion_paise > 0:
+                    owes[debtor][creditor] += portion_paise
 
     for settlement in group_data.get("settlements", []):
         payer = settlement["from"]

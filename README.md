@@ -31,8 +31,14 @@ On Windows, use `python` instead of `python3`.
 - Legacy expenses without an explicit ID can be referenced by their 1-based order in the group.
 - Editing or deleting an expense preserves the exact historical record of all settlements; balances and settlement plans are recalculated from remaining expenses and existing payments.
 - An amount must be more than 0, and whoever paid must be a member of the group.
+- Single-payer and multiple-payer expenses:
+  - An expense can be paid by a single group member: `add-expense flatmates "Groceries" 900 karan`. In `groups.json`, this is stored as `"paid_by": "karan"`.
+  - An expense can also be funded by multiple contributors with specified amounts: `add-expense flatmates "Dinner" 1200 karan=800,arjun=400`. In `groups.json`, this is stored as `"paid_by": {"karan": 800.0, "arjun": 400.0}`.
+  - The sum of contributor contributions must equal the expense total exactly in integer paise.
+  - Payer contributions specify who paid for the expense, which remains separate from the split (who owes or benefits from the expense).
+  - Existing JSON files with single-payer strings remain fully supported without migration.
 - An equal split keeps the paise, and the shares always add up to exactly the total. ₹1000 between three people is ₹333.34, ₹333.33 and ₹333.33.
-- `share` splits by weights, given after it as `name=weight`: `add-expense flatmates "Groceries" 900 karan share karan=2 arjun=1` means Karan's share is twice Arjun's.
+- `share` splits by weights, given after it as `name=weight`: `add-expense flatmates "Groceries" 900 karan share karan=2 arjun=1` means Karan's share is twice Arjun's. Multiple contributors can also be combined with weighted splits: `add-expense flatmates "Groceries" 900 karan=600,arjun=300 share karan=2 arjun=1`.
 - The summary shows each pair of people at most once, with the amount after everything is netted out. If Ravi owes Priya ₹300 and Priya owes Ravi ₹100, it shows "Ravi owes Priya ₹200.00".
 - Nobody is ever shown owing themselves.
 - After `settle ravi priya`, Ravi no longer owes Priya anything, and the summary shows that.
