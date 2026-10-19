@@ -20,12 +20,27 @@ On Windows, use `python` instead of `python3`.
 | Command | Does |
 |---|---|
 | `summary <group>` | Members, expenses, and who owes whom |
+| `validate-data` | Inspects stored group data, detects integrity errors, and reports diagnostics |
 | `add-expense <group> <description> <amount> <paid_by> [equal\|share]` | Records an expense. Split equally unless you say otherwise |
 | `edit-expense <group> <expense_id> <description> <amount> <paid_by> [equal\|share]` | Updates an existing expense by its stable ID |
 | `delete-expense <group> <expense_id>` | Deletes an expense by its stable ID |
 | `settle <group> <payer> <receiver>` | Records that `payer` paid back what they owe `receiver` |
 
 ## How it's supposed to work
+
+- **Data Integrity Validation**:
+  - Run `python3 -m split validate-data` (or `python -m split validate-data` on Windows) to inspect persisted groups without modifying them.
+  - Checks top-level structure, required group keys, valid member names, duplicate member detection, valid expense IDs, duplicate expense IDs, valid positive amounts in integer paise, valid payer and contributor references, split configurations and weights, and settlement records.
+  - Read-only guarantee: `validate-data` never modifies, renumbers, or rewrites group or settlement data.
+  - Returns exit code `0` when all groups pass validation, and exit code `1` when integrity errors are found. Useful before debugging balances or automating CI checks.
+  - Example output:
+    ```text
+    ERROR group=flatmates record=expense id=12 field=paid_by
+      Unknown payer 'david' is not a member of group 'flatmates'.
+      Hint: Payer must be one of the group's members.
+
+    Validation completed: 1 group checked, 1 error found.
+    ```
 
 - Every expense is assigned a unique, stable ID within its group. Editing an expense preserves its ID, and deleting an expense leaves all other expense IDs unchanged (no renumbering).
 - Legacy expenses without an explicit ID can be referenced by their 1-based order in the group.
