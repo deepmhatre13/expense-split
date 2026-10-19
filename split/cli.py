@@ -12,7 +12,8 @@ from split.calc import (
     to_paise,
     _SCALE,
 )
-from split.io import load_group, save_group, load_all_groups
+from split.io import load_group, save_group, load_all_groups, DEFAULT_DATA_PATH
+from split.validation import validate_file
 
 
 def cmd_summary(args):
@@ -389,6 +390,26 @@ def cmd_settle_plan(args):
             print(f"  • {p['from'].capitalize()} must pay {p['to'].capitalize()} ₹{p['amount']:.2f}")
 
 
+def cmd_validate_data(args):
+    filepath = getattr(args, "filepath", DEFAULT_DATA_PATH)
+    diagnostics, stats = validate_file(filepath)
+
+    if diagnostics:
+        for diag in diagnostics:
+            print(diag.format())
+            print()
+
+    groups_count = stats["groups_checked"]
+    errors_count = stats["errors_found"]
+    group_word = "group" if groups_count == 1 else "groups"
+    error_word = "error" if errors_count == 1 else "errors"
+
+    print(f"Validation completed: {groups_count} {group_word} checked, {errors_count} {error_word} found.")
+
+    if errors_count > 0:
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Expense Split CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
@@ -397,6 +418,10 @@ def main():
     p_sum = subparsers.add_parser("summary", help="Show summary and balances for a group")
     p_sum.add_argument("group", help="Group identifier (e.g. groupA, flatmates)")
     p_sum.set_defaults(func=cmd_summary)
+
+    # validate-data
+    p_val = subparsers.add_parser("validate-data", help="Inspect and validate group data integrity")
+    p_val.set_defaults(func=cmd_validate_data)
 
     # add-expense
     p_add = subparsers.add_parser("add-expense", help="Add an expense to a group")
