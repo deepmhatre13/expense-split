@@ -15,8 +15,6 @@ from split.calc import (
 
 from split.io import load_group, save_group, load_all_groups, DEFAULT_DATA_PATH
 from split.validation import validate_file
-
-from split.io import load_group, save_group, load_all_groups
 import re
 
 
@@ -172,17 +170,9 @@ def _validate_expense_fields(group, description, amount_raw, paid_by_raw, split_
     Returns (valid, error_msg, validated_dict) tuple.
     """
 
-    members = group.get("members", [])
-
-    paid_by = paid_by_raw.lower()
     all_members = get_all_members(group)
     active_members = get_active_members(group)
     archived_members = get_archived_members(group)
-
-    if paid_by not in all_members:
-        return False, f"Error: '{paid_by}' is not a member of the group.", None
-    if paid_by in archived_members:
-        return False, f"Error: '{paid_by}' is archived. Reactivate the member before adding an expense.", None
 
 
     try:
@@ -218,8 +208,10 @@ def _validate_expense_fields(group, description, amount_raw, paid_by_raw, split_
             if not name:
                 return False, f"Error: Invalid payer format '{entry}'. Use name=amount.", None
 
-            if name not in members:
+            if name not in all_members:
                 return False, f"Error: '{name}' is not a member of the group.", None
+            if name in archived_members:
+                return False, f"Error: '{name}' is archived. Reactivate the member before adding an expense.", None
 
             if name in paid_by_dict:
                 return False, f"Error: Duplicate contributor '{name}'.", None
@@ -246,8 +238,10 @@ def _validate_expense_fields(group, description, amount_raw, paid_by_raw, split_
         paid_by = paid_by_dict
     else:
         paid_by = paid_by_raw_clean.lower()
-        if paid_by not in members:
+        if paid_by not in all_members:
             return False, f"Error: '{paid_by}' is not a member of the group.", None
+        if paid_by in archived_members:
+            return False, f"Error: '{paid_by}' is archived. Reactivate the member before adding an expense.", None
 
     split = split_raw.lower() if split_raw else "equal"
     if split not in ("equal", "share"):

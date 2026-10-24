@@ -439,6 +439,92 @@ class TestGroupMembershipLifecycle(unittest.TestCase):
         self._run_cli(["reactivate-member", "unknown_group", "alice"])
         self.assertEqual(self._read_store(), before)
 
+    def test_multiple_contributors_with_active_members_succeeds(self):
+        """21: Adding an expense with multiple active contributors succeeds."""
+        group = {
+            "name": "Flatmates",
+            "members": ["alice", "bob", "carol"],
+            "archived_members": ["carol"],
+            "expenses": [],
+            "settlements": []
+        }
+        self._write_store({"g1": group})
+
+        success, out, _ = self._run_cli([
+            "add-expense", "g1", "Dinner", "30.0", "alice=20.00,bob=10.00", "equal"
+        ])
+        self.assertTrue(success)
+        self.assertIn("Added expense 'Dinner' of ₹30.00 to g1.", out)
+
+        store = self._read_store()["g1"]
+        self.assertEqual(len(store["expenses"]), 1)
+        self.assertEqual(store["expenses"][0]["paid_by"], {"alice": 20.0, "bob": 10.0})
+
+    def test_multiple_contributors_with_archived_member_rejected(self):
+        """22: Adding an expense where one contributor is archived is rejected."""
+        group = {
+            "name": "Flatmates",
+            "members": ["alice", "bob", "carol"],
+            "archived_members": ["carol"],
+            "expenses": [],
+            "settlements": []
+        }
+        self._write_store({"g1": group})
+        before = self._read_store()
+
+        success, out, _ = self._run_cli([
+            "add-expense", "g1", "Dinner", "30.0", "alice=20.00,carol=10.00", "equal"
+        ])
+        self.assertTrue(success)
+        self.assertIn("Error: 'carol' is archived. Reactivate the member before adding an expense.", out)
+        self.assertEqual(self._read_store(), before)
+
+    def test_multiple_contributors_with_unknown_member_rejected(self):
+        """23: Adding an expense where one contributor is not a member is rejected."""
+        group = {
+            "name": "Flatmates",
+            "members": ["alice", "bob"],
+            "expenses": [],
+            "settlements": []
+        }
+        self._write_store({"g1": group})
+        before = self._read_store()
+
+        success, out, _ = self._run_cli([
+            "add-expense", "g1", "Dinner", "30.0", "alice=20.00,stranger=10.00", "equal"
+        ])
+        self.assertTrue(success)
+        self.assertIn("Error: 'stranger' is not a member of the group.", out)
+        self.assertEqual(self._read_store(), before)
+
+    def test_edit_expense_multiple_contributors_with_archived_member_rejected(self):
+        """24: Editing an expense to include an archived contributor is rejected."""
+        group = {
+            "name": "Flatmates",
+            "members": ["alice", "bob", "carol"],
+            "archived_members": ["carol"],
+            "expenses": [
+                {
+                    "id": 1,
+                    "description": "Lunch",
+                    "amount": 20.0,
+                    "paid_by": "alice",
+                    "split": "equal",
+                    "shares": None
+                }
+            ],
+            "settlements": []
+        }
+        self._write_store({"g1": group})
+        before = self._read_store()
+
+        success, out, _ = self._run_cli([
+            "edit-expense", "g1", "1", "Lunch", "20.0", "alice=10.00,carol=10.00", "equal"
+        ])
+        self.assertTrue(success)
+        self.assertIn("Error: 'carol' is archived. Reactivate the member before adding an expense.", out)
+        self.assertEqual(self._read_store(), before)
+
     def test_multiple_groups_remain_isolated_when_membership_modified(self):
         """20: Modifying membership in one group does not affect other groups."""
         group1 = {
