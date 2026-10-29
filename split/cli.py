@@ -16,6 +16,9 @@ from split.io import load_group, save_group, load_all_groups, DEFAULT_DATA_PATH
 from split.validation import validate_file
 from split.backup import create_backup, restore_backup
 
+from split.migrations import execute_migration
+
+
 
 def cmd_summary(args):
     group = load_group(args.group)
@@ -521,6 +524,45 @@ def cmd_restore_data(args):
         if result.get("safety_backup_path"):
             print(f"Pre-restore safety backup saved at: {result['safety_backup_path']}")
 
+def cmd_migrate_data(args):
+    filepath = getattr(args, "filepath", DEFAULT_DATA_PATH)
+    dry_run = not getattr(args, "apply", False)
+
+    result = execute_migration(filepath=filepath, dry_run=dry_run)
+
+    if not result["success"]:
+        print("Migration failed:")
+        for err in result["errors"]:
+            print(f"  Error: {err}")
+        if result.get("diagnostics"):
+            print("\nValidation diagnostics:")
+            for diag in result["diagnostics"]:
+                print(diag.format())
+                print()
+        sys.exit(1)
+
+    if result["status"] == "no_op":
+        print("Store is already up-to-date. No migrations required.")
+        return
+
+    plans = result["plans"]
+    count = len(plans)
+    group_word = "group" if count == 1 else "groups"
+
+    if dry_run:
+        print(f"Dry run: {count} {group_word} proposed for migration:")
+        for p in plans:
+            src = f"v{p['source_version']}" if p["source_version"] is not None else "legacy (unversioned)"
+            tgt = f"v{p['target_version']}"
+            print(f"  • Group '{p['group_id']}': {src} -> {tgt}")
+        print("\nNo changes written to disk. Use '--apply' to execute migration.")
+    else:
+        print(f"Successfully migrated {count} {group_word}:")
+        for p in plans:
+            src = f"v{p['source_version']}" if p["source_version"] is not None else "legacy (unversioned)"
+            tgt = f"v{p['target_version']}"
+            print(f"  • Group '{p['group_id']}': {src} -> {tgt}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Expense Split CLI")
@@ -547,6 +589,13 @@ def main():
     mode_group.add_argument("--dry-run", dest="apply", action="store_false", help="Inspect and validate backup without modifying live store")
     mode_group.add_argument("--apply", dest="apply", action="store_true", help="Restore candidate data and replace live store atomically")
     p_res.set_defaults(func=cmd_restore_data)
+    # migrate-data
+    p_mig = subparsers.add_parser("migrate-data", help="Migrate group data to current schema version")
+    mig_group = p_mig.add_mutually_exclusive_group(required=True)
+    mig_group.add_argument("--dry-run", dest="apply", action="store_false", help="Inspect proposed migrations without modifying files (read-only)")
+    mig_group.add_argument("--apply", dest="apply", action="store_true", help="Apply migrations and atomically update the store")
+    p_mig.set_defaults(func=cmd_migrate_data)
+
 
     # add-expense
     p_add = subparsers.add_parser("add-expense", help="Add an expense to a group")
